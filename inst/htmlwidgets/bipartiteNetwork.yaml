@@ -1,0 +1,7 @@
+dependencies:
+ - name: THREE
+   version: 91
+   src: "htmlwidgets/lib"
+   script:
+     - three.min.js
+     - OrbitControls.js
