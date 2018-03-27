@@ -8,8 +8,7 @@ dependencies:
  - name: d3
    version: 5
    src: "htmlwidgets/lib"
-   script: d3.v5.min.js
- - name: d3_force
-   version: 1
-   src: "htmlwidgets/lib"
-   script: d3_force_3d.js
+   script:
+     - d3.v5.min.js
+     - d3-octree.min.js
+     - d3_force_3d.js
