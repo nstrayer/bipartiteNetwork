@@ -5,3 +5,11 @@ dependencies:
    script:
      - three.min.js
      - OrbitControls.js
+ - name: d3
+   version: 5
+   src: "htmlwidgets/lib"
+   script: d3.v5.min.js
+ - name: d3_force
+   version: 1
+   src: "htmlwidgets/lib"
+   script: d3_force_3d.js

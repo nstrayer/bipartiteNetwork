@@ -47,57 +47,46 @@ HTMLWidgets.widget({
       return renderer;
     }
 
-    // construct mesh for the edges between nodes
-    function buildEdges(data, constants){
-      const geometry = new THREE.BufferGeometry(),
-            num_edges = data.edges.length,
-            edge_locations = new Float32Array(num_edges*6),
-            edge_material = new THREE.LineBasicMaterial( {
-              color: constants.colors.edge,
-              opacity: constants.misc.edge_opacity,
-              transparent: true,
-              linewidth: constants.sizes.edge_width,
-            } );
+    // returns typed arrays for the buffer geometry
+    function generate_edge_positions(nodes, links){
+      const num_edges = links.length;
+      const edge_locations = new Float32Array(num_edges*6);
 
       for(let i=0; i<num_edges; i++){
         // get vertex ids for start and end of edge
-        const {from, to} = data.edges[i];
-        const {x:xs,y:ys,z:zs} = data.vertices[from - 1];
-        const {x:xe,y:ye,z:ze} = data.vertices[to - 1];
+        const link = links[i];
+        const source = link.source.index;
+          const target = link.target.index;
+          const {cx:xs,cy:ys,cz:zs} = nodes[source];
+          const {cx:xe,cy:ye,cz:ze} = nodes[target];
 
-        // fill in edge locations
-        edge_locations[i*6]     = xs;
-        edge_locations[i*6 + 1] = ys;
-        edge_locations[i*6 + 2] = zs;
+          // fill in edge locations
+          edge_locations[i*6]     = xs;
+          edge_locations[i*6 + 1] = ys;
+          edge_locations[i*6 + 2] = zs;
 
-        edge_locations[i*6 + 3] = xe;
-        edge_locations[i*6 + 4] = ye;
-        edge_locations[i*6 + 5] = ze;
+          edge_locations[i*6 + 3] = xe;
+          edge_locations[i*6 + 4] = ye;
+          edge_locations[i*6 + 5] = ze;
+
       }
-
-      // send locations vector to the geometry buffer.
-      geometry.addAttribute( 'position', new THREE.BufferAttribute( edge_locations, 3 ) );
-
-      return new THREE.LineSegments( geometry, edge_material);
+      return edge_locations;
     }
 
-    // construct mesh for the nodes.
-    function buildNodes(data, plot_colors, constants){
-      // fill in a blank geometry object with the vertices from our points
-      const geometry = new THREE.BufferGeometry(),
-            num_points = data.vertices.length,
+    // same but for the nodes/points
+    function generate_point_attributes(nodes, plot_colors){
+      const num_points = nodes.length,
+            color = new THREE.Color(),
             point_locations = new Float32Array(num_points*3),
             point_colors = new Float32Array(num_points*3),
-            point_sizes = new Float32Array(num_points),
-            point_material = makeNodeMaterial(constants);
+            point_sizes = new Float32Array(num_points);
+      let vertex;
 
       for (let i = 0; i < num_points; i ++ ) {
-        const vertex = data.vertices[i];
-
-        // place the point
-        point_locations[i*3]     = vertex.x;
-        point_locations[i*3 + 1] = vertex.y;
-        point_locations[i*3 + 2] = vertex.z;
+        vertex = nodes[i];
+        point_locations[i*3]     = vertex.cx;
+        point_locations[i*3 + 1] = vertex.cy;
+        point_locations[i*3 + 2] = vertex.cz;
 
         // color the point
         const {r,g,b} = plot_colors[vertex.hub ? 'hub' : vertex.subtype ? 'subtype': 'point'];
@@ -105,19 +94,52 @@ HTMLWidgets.widget({
         point_colors[i*3 + 1] = g;
         point_colors[i*3 + 2] = b;
 
-        // and size it...
-        point_sizes[i] = vertex.hub ? constants.sizes.hub_size: constants.sizes.point_size;
-      }
+        point_colors[i*3] = color.r;
+        point_colors[i*3 + 1] = color.g;
+        point_colors[i*3 + 2] = color.b;
 
-      geometry.addAttribute('position', new THREE.BufferAttribute( point_locations, 3 ) );
-      geometry.addAttribute('color',    new THREE.BufferAttribute( point_colors,    3 ) );
-      geometry.addAttribute('size',     new THREE.BufferAttribute( point_sizes,     1 ) );
+        // and sizes...
+        point_sizes[i] = constants.point_size * (vertex.hub? constants.phenotype_size_mult: 1);
+      }
+      return {locations: point_locations, colors: point_colors, sizes: point_sizes};
+    }
+    // construct mesh for the edges between nodes
+
+    function buildEdges(nodes, links, constants){
+      const geometry = new THREE.BufferGeometry(),
+            num_edges = data.edges.length,
+            edge_locations = generate_edge_positions(nodes, links),
+            material = new THREE.LineBasicMaterial( {
+              color: constants.colors.edge,
+              opacity: constants.misc.edge_opacity,
+              transparent: true,
+              linewidth: constants.sizes.edge_width,
+            } );
+
+      // send locations vector to the geometry buffer.
+      geometry.addAttribute( 'position', new THREE.BufferAttribute( edge_locations, 3 ) );
+
+      return new THREE.LineSegments( geometry, material);
+    }
+
+    // construct mesh for the nodes.
+    function buildNodes(nodes, plot_colors, constants){
+      // fill in a blank geometry object with the vertices from our points
+      const geometry = new THREE.BufferGeometry(),
+            num_points = data.vertices.length,
+            {locations, colors, sizes} = generate_point_attributes(nodes, plot_colors);
+            material = makeNodeMaterial(constants);
+
+
+      geometry.addAttribute('position', new THREE.BufferAttribute( locations, 3 ) );
+      geometry.addAttribute('color',    new THREE.BufferAttribute( colors,    3 ) );
+      geometry.addAttribute('size',     new THREE.BufferAttribute( sizes,     1 ) );
 
       // need to run this so we get a center to aim our camera at.
       geometry.computeBoundingSphere();
 
       // wrap geometry in material and return along with center
-      return new THREE.Points(geometry, point_material);
+      return new THREE.Points(geometry, material);
     }
 
     // sets up three scene with the nodes and edges
@@ -184,6 +206,16 @@ HTMLWidgets.widget({
         plot_colors[type] = new THREE.Color(colors[type]);
       }
       return plot_colors;
+    }
+
+    // setup the 3d simulation code
+    function setupSimulation(nodes, links){
+      return d3_force.forceSimulation()
+        .numDimensions(3)
+        .nodes(nodes)
+        .force("link", d3_force.forceLink(links).id(d => d.id))
+        .force("charge", d3_force.forceManyBody())
+        .stop();
     }
 
     class phewasNetwork{
@@ -256,13 +288,49 @@ HTMLWidgets.widget({
       onMouseOver(event){
         this.mouse.x =   (event.clientX / this.width)  * 2 - 1;
         this.mouse.y = - (event.clientY / this.height) * 2 + 1;
-        // console.log(`x: ${this.mouse.x} | y: ${this.mouse.y}`);
+      }
+
+      normalize_projection(){
+        const x_scale = d3.scaleLinear().range([-1,1]);
+        const y_scale = d3.scaleLinear().range([-1,1]);
+        const z_scale = d3.scaleLinear().range([-1,1]);
+
+        return (nodes) => {
+          x_scale.domain(d3.extent(nodes, d => d.x));
+          y_scale.domain(d3.extent(nodes, d => d.y));
+          z_scale.domain(d3.extent(nodes, d => d.z));
+
+          nodes.forEach(node => {
+            node.cx = x_scale(node.x);
+            node.cy = y_scale(node.y);
+            node.cz = z_scale(node.z);
+          });
+        };
       }
 
       // actual render function. This gets called repeatedly to update viz
       render(data){
         // request to run function again at next interval
         requestAnimationFrame(() => this.render());
+
+        // run instances of our layout simulation
+        this.simulation.tick();
+
+        // normalize our projections
+        this.normalize_projection(data.vertices);
+
+        const {locations: p_l, colors: p_c, sizes: p_s} = generate_point_attributes(data.vertices);
+        const e_l = generate_edge_positions(data.vertices, data.edges);
+        this.nodes.geometry.attributes.position.array = p_l;
+        this.nodes.geometry.attributes.color.array = p_c;
+        this.nodes.geometry.attributes.size.array = p_s;
+        this.nodes.geometry.attributes.position.needsUpdate = true;
+        this.nodes.geometry.attributes.color.needsUpdate = true;
+        this.nodes.geometry.attributes.size.needsUpdate = true;
+        this.nodes.geometry.computeBoundingSphere();
+
+        this.edges.geometry.attributes.position.array = e_l;
+        this.edges.geometry.attributes.position.needsUpdate = true;
 
         // update our raycaster with current mouse position
         this.raycaster.setFromCamera( this.mouse, this.camera );
@@ -321,15 +389,18 @@ HTMLWidgets.widget({
 
         const constants = this.constants;
 
+        // start up our simulation object
+        this.simulation = setupSimulation(data.vertices, data.edges);
+
         // Initialize a color object for later node coloring.
         this.plot_colors = makePlotColors(constants.colors);
 
         // --------------------------------------------------------------
         // Set up edges between cases and hubs
-        this.edges = buildEdges(data, constants);
+        this.edges = buildEdges(data.vertices, data.edges, constants);
         // --------------------------------------------------------------
         // Set up points/nodes representing cases and hubs
-        this.nodes = buildNodes(data, this.plot_colors, constants);
+        this.nodes = buildNodes(data.vertices, this.plot_colors, constants);
         // --------------------------------------------------------------
         // Initialize the 'scene' and add our geometries we just made
         this.scene = setupScene(this.plot_colors, this.nodes, this.edges);
