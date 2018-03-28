@@ -386,8 +386,10 @@ class phewasNetwork{
 
     // check if we've already got a scene going
     if(this.node_mesh){
-      this.node_mesh.dispose()
-      this.link_mesh.dispose()
+      this.node_mesh.geometry.dispose();
+      this.link_mesh.geometry.dispose();
+      // reset the iteration count so new data can be layout-ed
+      this.iteration = 0;
     }
 
     // extract node and link data
