@@ -233,7 +233,7 @@ class phewasNetwork{
         hub_size: 0.3,
         selection_size_mult: 3,
         edge_width: 0.008,
-        raycast_res: 0.01,
+        raycast_res: 0.1,
       },
       camera: {
         setup: {
@@ -267,6 +267,9 @@ class phewasNetwork{
 
     // setup vector for holding mouse position for raycaster
     this.mouse = new THREE.Vector2(100, 100);
+    // also keep track of the raw positition for placing tooltip.
+    this.mouseRaw = {x:0, y:0};
+    this.currentlySelected = null; // Keep track of what node is selected.
 
     // scales to normalize projections to avoid messing with camera.
     this.x_scale = d3.scaleLinear().range([-1,1]);
@@ -285,12 +288,30 @@ class phewasNetwork{
 
     // initialize the renderer since it doesn't need anything passed to it to start
     this.renderer = makeRenderer({el, width, height});
+
+    // append a small div to act as our tooltip
+    this.tooltip = d3.select(el)
+      .append('div')
+      .style('width', 150)
+      .style('width', 150)
+      .style('background', 'red')
+      .html(`<h1> Hi There! </h1>`)
+      .style('position', 'fixed')
+      .style('display', 'none')
+      .on('click', function(){
+        d3.select(this)
+          .style('display', 'none')
+          .style('top', -1000)
+          .style('left', -1000);
+      });
   }
 
   // sets mouse location for the scene for interaction with raycaster
   onMouseOver(event){
     this.mouse.x =   (event.clientX / this.width)  * 2 - 1;
     this.mouse.y = - (event.clientY / this.height) * 2 + 1;
+    this.mouseRaw.x = event.clientX;
+    this.mouseRaw.y = event.clientY;
   }
 
   // brings projection into a -1,1 range for ease of viewing.
@@ -347,24 +368,60 @@ class phewasNetwork{
     // request animation frame for continued running
     requestAnimationFrame(() => this.render());
 
+    // Only iterate through the layout for a given number of steps.
     if(this.iteration < this.max_iterations){
       // run instances of our layout simulation
       this.simulation.tick();
-
       // normalize the data after layout step
       this.normalize_projection();
-
       // update mesh attributes.
       this.updateMeshes();
-
       this.iteration += 1;
     }
 
     // update our raycaster with current mouse position
-    //this.raycaster.setFromCamera( this.mouse, this.camera );
-    //// figure out what points it intersects
-    //const intersects = this.raycaster.intersectObject( this.nodes );
-    //// expand vertice if selected.
+    this.raycaster.setFromCamera( this.mouse, this.camera );
+
+    // figure out what points it intersects
+    const intersects = this.raycaster.intersectObject( this.node_mesh );
+
+    if(intersects.length > 0){
+      const newSelection = this.nodes[intersects[0].index];
+
+      const noPreviousSelection = this.currentlySelected === null;
+      const differentFromLastSelection = noPreviousSelection || (newSelection.name !== this.currentlySelected.name);
+
+      if(differentFromLastSelection){
+        // reset the sizes of the other nodes
+        this.updateMeshes();
+      }
+
+      if(noPreviousSelection || differentFromLastSelection){
+        // set our selection with the new one
+        this.currentlySelected = newSelection;
+      }
+
+      // expand selected node
+      this.expandNode(intersects[0].index);
+
+      // move tooltip over to node and change text to node title if on hub
+      // this will probably need to change to make it more general
+      if(this.currentlySelected.hub){
+        this.tooltip
+          .html(`<h2>Code: ${this.currentlySelected.name}</h2>`)
+          .style('top',  `${this.mouseRaw.y}px`)
+          .style('left', `${this.mouseRaw.x}px`)
+          .style('display', 'block');
+      }
+    } else {
+      // if this is the first frame without something selected, reset the sizes
+      if(this.currentlySelected){
+        this.updateMeshes();
+        this.currentlySelected = null;
+      }
+    }
+
+    // expand vertice if selected.
     //if(this.constants.misc.interactive){
     //  if(intersects.length > 0){
     //    this.selectResetNodes([intersects[0].index]);
@@ -372,7 +429,6 @@ class phewasNetwork{
     //    this.selectResetNodes();
     //  }
     //}
-
 
     // Grab new position from controls (if user has dragged, etc)
     this.controls.update();
@@ -395,6 +451,7 @@ class phewasNetwork{
     // extract node and link data
     this.nodes = data.vertices.map(d => ({
       id: d.index,
+      name: d.name || null,
       hub: d.hub,
       subtype: d.subtype
     }));
@@ -428,11 +485,12 @@ class phewasNetwork{
     // Setup camera to actually see our scene. Point it at middle of network
     this.camera = setupCamera(this.constants.camera);
     // --------------------------------------------------------------
-    //// Raycaster for selecting points.
-    //this.raycaster = makeRaycaster(this.constants);
-    //// setup a mousemove event to keep track of mouse position for raycaster.
-    //document.addEventListener( 'mousemove', this.onMouseOver.bind(this), false );
-    //// --------------------------------------------------------------
+    // Raycaster for selecting points.
+    this.raycaster = makeRaycaster(this.constants);
+
+    // setup a mousemove event to keep track of mouse position for raycaster.
+    document.addEventListener( 'mousemove', this.onMouseOver.bind(this), false );
+    // --------------------------------------------------------------
     // Attach some controls to our camera and renderer
     this.controls = setupControls(this.camera, this.renderer, this.constants);
     // --------------------------------------------------------------
@@ -455,25 +513,21 @@ class phewasNetwork{
   //  this.constants.misc.interactive = !this.constants.misc.interactive;
   //}
 
-  //// will highlight and expand a group of nodes or if passed nothing will reset to defaults
-  //selectResetNodes(indices = []){
-  //  // check if we're selecting nodes or resetting them,
-  //  // this determines the length of our size/color setting loop.
-  //  const selecting = indices.length > 0,
-  //        loopLength = selecting ? indices.length: this.data.vertices.length,
-  //        color_attributes = this.nodes.geometry.attributes.color.array,
-  //        size_attributes = this.nodes.geometry.attributes.size.array;
-  //  for(let i=0; i<loopLength; i++){
-  //    const index = selecting ? indices[i]: i,
-  //          [color, size] = this.colorSizeChooser(this.data.vertices[index], selecting);
-  //    color_attributes[index*3]     = color.r;
-  //    color_attributes[index*3 + 1] = color.g;
-  //    color_attributes[index*3 + 2] = color.b;
-  //    size_attributes[index] = size;
-  //  }
-  //  this.nodes.geometry.attributes.color.needsUpdate = true;
-  //  this.nodes.geometry.attributes.size.needsUpdate = true;
-  //}
+  // will highlight and expand a group of nodes or if passed nothing will reset to defaults
+  expandNode(index){
+    const color_attributes = this.node_mesh.geometry.attributes.color.array,
+          size_attributes = this.node_mesh.geometry.attributes.size.array;
+
+    const [color, size] = this.colorSizeChooser(this.nodes[index], true);
+    color_attributes[index*3]     = color.r;
+    color_attributes[index*3 + 1] = color.g;
+    color_attributes[index*3 + 2] = color.b;
+    size_attributes[index] = size;
+
+    this.node_mesh.geometry.attributes.color.needsUpdate = true;
+    this.node_mesh.geometry.attributes.size.needsUpdate = true;
+  }
+
 
 
 }
