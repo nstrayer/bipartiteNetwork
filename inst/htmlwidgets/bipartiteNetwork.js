@@ -293,6 +293,7 @@ class phewasNetwork{
     this.mouse.y = - (event.clientY / this.height) * 2 + 1;
   }
 
+  // brings projection into a -1,1 range for ease of viewing.
   normalize_projection(){
     this.x_scale.domain(d3.extent(this.nodes, d => d.x));
     this.y_scale.domain(d3.extent(this.nodes, d => d.y));
@@ -380,8 +381,15 @@ class phewasNetwork{
     this.renderer.render(this.scene, this.camera);
   }
 
-  // function called to kick of visualization with data.
+  // function called to kick off visualization with data.
   drawPlot({data, settings}){
+
+    // check if we've already got a scene going
+    if(this.node_mesh){
+      this.node_mesh.dispose()
+      this.link_mesh.dispose()
+    }
+
     // extract node and link data
     this.nodes = data.vertices.map(d => ({
       id: d.index,
