@@ -50,7 +50,7 @@ bipartiteNetwork(
     rotateSpeed = 0.01
  ),
  sizes = list(
-   raycast_res = 0.01
+   raycast_res = 0.05
  ),
  max_iterations = 200,
  force_strength = -1

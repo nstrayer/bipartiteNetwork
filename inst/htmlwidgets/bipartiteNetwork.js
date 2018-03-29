@@ -211,6 +211,24 @@ function setupSimulation(nodes, links, strength = -1){
     .stop();
 }
 
+function makeTooltip(el){
+  return d3.select(el)
+      .append('div')
+      .html('')
+      .style('background', 'white')
+      .style('border-radius', '10px')
+      .style('padding', '0px 15px')
+      .style('box-shadow', '1px 1px 3px black')
+      .style('position', 'fixed')
+      .style('display', 'none');
+}
+
+function resetTooltip(tooltip){
+  tooltip
+    .style('display', 'none')
+    .style('top', -1000)
+    .style('left', -1000);
+}
 
 class phewasNetwork{
   constructor(el, width, height){
@@ -231,7 +249,7 @@ class phewasNetwork{
       sizes: {
         point_size: 0.1,
         hub_size: 0.3,
-        selection_size_mult: 3,
+        selection_size_mult: 1.5,
         edge_width: 0.008,
         raycast_res: 0.1,
       },
@@ -262,6 +280,8 @@ class phewasNetwork{
         node_outline_black: true,
         edge_opacity: 0.1,
         interactive: false,
+        tooltip_offset: 20,
+        select_all: false, // do we show tooltip for every node or just the 'hub' nodes?
       }
     };
 
@@ -288,30 +308,19 @@ class phewasNetwork{
 
     // initialize the renderer since it doesn't need anything passed to it to start
     this.renderer = makeRenderer({el, width, height});
+    // selection of the canvas we're rendering for accurate raycasting
+    this.canvas = el.querySelector("canvas");
 
     // append a small div to act as our tooltip
-    this.tooltip = d3.select(el)
-      .append('div')
-      .style('width', 150)
-      .style('width', 150)
-      .style('background', 'red')
-      .html(`<h1> Hi There! </h1>`)
-      .style('position', 'fixed')
-      .style('display', 'none')
-      .on('click', function(){
-        d3.select(this)
-          .style('display', 'none')
-          .style('top', -1000)
-          .style('left', -1000);
-      });
+    this.tooltip = makeTooltip(el);
   }
 
   // sets mouse location for the scene for interaction with raycaster
   onMouseOver(event){
-    this.mouse.x =   (event.clientX / this.width)  * 2 - 1;
-    this.mouse.y = - (event.clientY / this.height) * 2 + 1;
-    this.mouseRaw.x = event.clientX;
-    this.mouseRaw.y = event.clientY;
+    this.mouse.x =   (event.offsetX / this.width)  * 2 - 1;
+    this.mouse.y = - (event.offsetY / this.height) * 2 + 1;
+    this.mouseRaw.x = event.offsetX;
+    this.mouseRaw.y = event.offsetY;
   }
 
   // brings projection into a -1,1 range for ease of viewing.
@@ -329,18 +338,24 @@ class phewasNetwork{
 
   updateMeshes(){
     // generate the new attribute vectors for the point and line meshes
-    const {locations: p_l, colors: p_c, sizes: p_s} = generate_point_attributes(this.nodes, this.plot_colors, this.constants)
-    const e_l = generate_edge_positions(this.nodes, this.links);
-
+    const {
+      locations: p_l,
+      colors: p_c,
+      sizes: p_s,
+    } = generate_point_attributes(this.nodes, this.plot_colors, this.constants);
     this.node_mesh.geometry.attributes.position.array = p_l;
     this.node_mesh.geometry.attributes.color.array = p_c;
     this.node_mesh.geometry.attributes.size.array = p_s;
+
+    this.link_mesh.geometry.attributes.position.array = generate_edge_positions(this.nodes, this.links);
+
+    // recompute bounding sphere for camera centering.
+    this.node_mesh.geometry.computeBoundingSphere();
+
+    // let the scene know the meshes need to be updated.
     this.node_mesh.geometry.attributes.position.needsUpdate = true;
     this.node_mesh.geometry.attributes.color.needsUpdate = true;
     this.node_mesh.geometry.attributes.size.needsUpdate = true;
-    this.node_mesh.geometry.computeBoundingSphere();
-
-    this.link_mesh.geometry.attributes.position.array = e_l;
     this.link_mesh.geometry.attributes.position.needsUpdate = true;
   }
 
@@ -380,14 +395,13 @@ class phewasNetwork{
     }
 
     // update our raycaster with current mouse position
-    this.raycaster.setFromCamera( this.mouse, this.camera );
+    this.raycaster.setFromCamera(this.mouse, this.camera);
 
     // figure out what points it intersects
-    const intersects = this.raycaster.intersectObject( this.node_mesh );
+    const intersects = this.raycaster.intersectObject(this.node_mesh);
 
     if(intersects.length > 0){
       const newSelection = this.nodes[intersects[0].index];
-
       const noPreviousSelection = this.currentlySelected === null;
       const differentFromLastSelection = noPreviousSelection || (newSelection.name !== this.currentlySelected.name);
 
@@ -401,34 +415,32 @@ class phewasNetwork{
         this.currentlySelected = newSelection;
       }
 
-      // expand selected node
-      this.expandNode(intersects[0].index);
+
 
       // move tooltip over to node and change text to node title if on hub
       // this will probably need to change to make it more general
-      if(this.currentlySelected.hub){
+      if(this.currentlySelected.hub || this.constants.misc.select_all){
+        // expand selected node
+        this.expandNode(intersects[0].index);
+
+        // update tooltip with name of node.
         this.tooltip
-          .html(`<h2>Code: ${this.currentlySelected.name}</h2>`)
-          .style('top',  `${this.mouseRaw.y}px`)
-          .style('left', `${this.mouseRaw.x}px`)
+          .html(`<h3>Code: ${this.currentlySelected.name}</h3>`)
+          .style('top',  `${this.mouseRaw.y + this.constants.misc.tooltip_offset}px`)
+          .style('left', `${this.mouseRaw.x + this.constants.misc.tooltip_offset}px`)
           .style('display', 'block');
       }
     } else {
       // if this is the first frame without something selected, reset the sizes
       if(this.currentlySelected){
+        // reset tooltip
+        resetTooltip(this.tooltip);
+        // unselect nodes visually
         this.updateMeshes();
+        // undo selected internally
         this.currentlySelected = null;
       }
     }
-
-    // expand vertice if selected.
-    //if(this.constants.misc.interactive){
-    //  if(intersects.length > 0){
-    //    this.selectResetNodes([intersects[0].index]);
-    //  } else {
-    //    this.selectResetNodes();
-    //  }
-    //}
 
     // Grab new position from controls (if user has dragged, etc)
     this.controls.update();
@@ -487,9 +499,8 @@ class phewasNetwork{
     // --------------------------------------------------------------
     // Raycaster for selecting points.
     this.raycaster = makeRaycaster(this.constants);
-
     // setup a mousemove event to keep track of mouse position for raycaster.
-    document.addEventListener( 'mousemove', this.onMouseOver.bind(this), false );
+    this.canvas.addEventListener( 'mousemove', this.onMouseOver.bind(this), false );
     // --------------------------------------------------------------
     // Attach some controls to our camera and renderer
     this.controls = setupControls(this.camera, this.renderer, this.constants);
@@ -509,11 +520,7 @@ class phewasNetwork{
     this.controls.autoRotate = !this.controls.autoRotate;
   }
 
-  //toggleInteraction(){
-  //  this.constants.misc.interactive = !this.constants.misc.interactive;
-  //}
-
-  // will highlight and expand a group of nodes or if passed nothing will reset to defaults
+  // will highlight and expand a given node
   expandNode(index){
     const color_attributes = this.node_mesh.geometry.attributes.color.array,
           size_attributes = this.node_mesh.geometry.attributes.size.array;
@@ -527,8 +534,6 @@ class phewasNetwork{
     this.node_mesh.geometry.attributes.color.needsUpdate = true;
     this.node_mesh.geometry.attributes.size.needsUpdate = true;
   }
-
-
 
 }
 
