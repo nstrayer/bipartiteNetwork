@@ -12,6 +12,8 @@ bipartiteNetwork <- function(
   camera = list(),
   controls = list(),
   misc = list(),
+  max_iterations = 100,
+  force_strength = -1,
   width = NULL, height = NULL, elementId = NULL) {
 
   # forward options using x
@@ -22,7 +24,9 @@ bipartiteNetwork <- function(
       sizes = sizes,
       camera = camera,
       controls = controls,
-      misc = misc
+      misc = misc,
+      max_iterations = max_iterations,
+      force_strength = force_strength
     )
   )
 
