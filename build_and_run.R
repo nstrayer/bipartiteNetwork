@@ -47,12 +47,15 @@ bipartiteNetwork(
   colors = list(background = 'white'),
   controls = list(
     autoRotate = FALSE,
-    rotateSpeed = 0.01
- ),
- sizes = list(
-   raycast_res = 0.05
- ),
- max_iterations = 200,
- force_strength = -1
+    rotateSpeed = 0.05
+  ),
+  sizes = list(
+    raycast_res = 0.05
+  ),
+  misc = list(
+    interactive = TRUE,
+    max_iterations = 200,
+    manybody_strength = -2
+  )
 )
 

@@ -195,20 +195,23 @@ function makePlotColors(colors){
 }
 
 // setup the 3d simulation code
-function setupSimulation(nodes, links, strength = -1){
-  return d3.forceSimulation()
+function setupSimulation(nodes, links, manybody_strength, link_strength){
+   const sim = d3.forceSimulation()
     .numDimensions(3)
     .nodes(nodes)
     .force("link",
-      d3.forceLink(links)
-        .id(d => d.id)
-        //.strength(0.05)
+      link_strength === null ?
+        d3.forceLink(links).id(d => d.id):
+        d3.forceLink(links).id(d => d.id).strength(link_strength)
     )
     .force("charge",
       d3.forceManyBody()
-        .strength(strength)
-    )
-    .stop();
+        .strength(manybody_strength)
+    );
+
+  sim.tick(); // kick off a single iteration to get data into correct form
+
+  return sim;
 }
 
 function makeTooltip(el){
@@ -236,52 +239,55 @@ class phewasNetwork{
     this.height = height;
 
     this.constants = {
-      colors: {
-        background: 'black',
-        point: 0x8da0cb,
-        selected_point:'red',
-        hub: 0x66c2a5,
-        selected_hub:'green',
-        subtype: 0xfc8d62,
-        selected_subtype: 'purple',
-        edge: 0xbababa,
+      colors: {                    // Colors of chart
+        background: 'white',        // background of the chart
+        point: 0x8da0cb,            // default points (no hub or subtype)
+        selected_point:'red',       // selected subtype or hub
+        hub: 0x66c2a5,              // the nodes with hub = true
+        selected_hub:'green',       // hub nodes when selected
+        subtype: 0xfc8d62,          // normal points when they are subtypes
+        selected_subtype: 'purple', // subtype nodes when they are selected
+        edge: 0xbababa,             // edges between nodes
       },
-      sizes: {
-        point_size: 0.1,
-        hub_size: 0.3,
-        selection_size_mult: 1.5,
-        edge_width: 0.008,
-        raycast_res: 0.1,
+      sizes: {                     // Sizes of chart components (graph spans cube from -1 to 1)
+        point_size: 0.1,            // Normal node diameter
+        hub_size: 0.3,              // Hub diameter
+        selection_size_mult: 1.5,   // How much nodes grow when selected
+        edge_width: 0.008,          // Thickness of lines connecting nodes
+        raycast_res: 0.1,           // Thickness of invisible raycasting selection beam
       },
-      camera: {
-        setup: {
-          fov: 65,              // Field of view
-          aspect: width/height,
-          near: 0.1,            // object will get clipped if they are closer than 1 world unit
-          far: 100,            // and will fade away if they are further than 1000 units away
+      camera: {                   // Camera settings
+        setup: {                   // Initializations
+          fov: 65,                  // Field of view
+          aspect: width/height,     // Aspect ratio of view
+          near: 0.1,                // object will get clipped if they are closer than 1 world unit
+          far: 100,                 // and will fade away if they are further than 1000 units away
         },
-        start_pos: { x: 1.2, y: 1.2, z: 2 },
-        center: { x: 0.5, y: 0.5, z: 0.5 }
+        start_pos: { x: 1.2, y: 1.2, z: 2 }, // 3d position of camera on load
+        center: { x: 0.5, y: 0.5, z: 0.5 }   // position around which the camera rotates.
       },
-      controls: {
-        enableDamping:true,      // For that slippery Feeling
-        dampingFactor:0.12,      // Needs to call update on render loop
-        rotateSpeed:0.08,        // Rotate speed
-        panSpeed: 0.05,
-        autoRotate:true,        // turn this guy to true for a spinning camera
-        autoRotateSpeed:0.2,    // 30
-        mouseButtons: {
+      controls: {                // Controls
+        enableDamping:true,       // For that slippery Feeling
+        dampingFactor:0.12,       // Needs to call update on render loop
+        rotateSpeed:0.08,         // Rotate speed
+        panSpeed: 0.05,           // How fast panning happens
+        autoRotate:true,          // turn this guy to true for a spinning camera
+        autoRotateSpeed:0.2,      // how fast should it spin
+        mouseButtons: {           // Button controls for controlling.
           ORBIT: THREE.MOUSE.RIGHT,
           ZOOM: THREE.MOUSE.MIDDLE,
           PAN: THREE.MOUSE.LEFT
         },
       },
-      misc: {
-        node_outline_black: true,
-        edge_opacity: 0.1,
-        interactive: false,
-        tooltip_offset: 20,
-        select_all: false, // do we show tooltip for every node or just the 'hub' nodes?
+      misc: {                    // Other settings
+        node_outline_black: true, // Outline the node circles in black? Default is white
+        edge_opacity: 0.1,        // How transparent should our node connections be
+        interactive: true,        // Turn off all interactivity with the network?
+        tooltip_offset: 20,       // Tooltip that shows whatever's in the 'name' field should be offset by how much?
+        select_all: false,        // do we show tooltip for every node or just the 'hub' nodes?
+        max_iterations: 250,      // Number of iterations the layout simulation runs
+        manybody_strength: -1,    // Attractive force between nodes irrespective of links
+        link_strength: null,      // attractive force of links. Falsy values default to a function of number of connections.
       }
     };
 
@@ -319,8 +325,8 @@ class phewasNetwork{
   onMouseOver(event){
     this.mouse.x =   (event.offsetX / this.width)  * 2 - 1;
     this.mouse.y = - (event.offsetY / this.height) * 2 + 1;
-    this.mouseRaw.x = event.offsetX;
-    this.mouseRaw.y = event.offsetY;
+    this.mouseRaw.x = event.clientX;
+    this.mouseRaw.y = event.clientY;
   }
 
   // brings projection into a -1,1 range for ease of viewing.
@@ -384,7 +390,7 @@ class phewasNetwork{
     requestAnimationFrame(() => this.render());
 
     // Only iterate through the layout for a given number of steps.
-    if(this.iteration < this.max_iterations){
+    if(this.iteration < this.constants.misc.max_iterations){
       // run instances of our layout simulation
       this.simulation.tick();
       // normalize the data after layout step
@@ -394,51 +400,56 @@ class phewasNetwork{
       this.iteration += 1;
     }
 
-    // update our raycaster with current mouse position
-    this.raycaster.setFromCamera(this.mouse, this.camera);
+    if(this.constants.misc.interactive){
+        // update our raycaster with current mouse position
+      this.raycaster.setFromCamera(this.mouse, this.camera);
 
-    // figure out what points it intersects
-    const intersects = this.raycaster.intersectObject(this.node_mesh);
+      // figure out what points it intersects
+      const intersects = this.raycaster.intersectObject(this.node_mesh);
 
-    if(intersects.length > 0){
-      const newSelection = this.nodes[intersects[0].index];
-      const noPreviousSelection = this.currentlySelected === null;
-      const differentFromLastSelection = noPreviousSelection || (newSelection.name !== this.currentlySelected.name);
+      if(intersects.length > 0){
+        // find all nodes intersected
+        const intersectedNodes = intersects
+          .map(d => Object.assign({},this.nodes[d.index], {node_index: d.index}))
+          .filter(d => d.hub || this.constants.misc.select_all);
 
-      if(differentFromLastSelection){
-        // reset the sizes of the other nodes
-        this.updateMeshes();
-      }
+        if(intersectedNodes.length !== 0){
+          const newSelection = intersectedNodes[0];
+          const noPreviousSelection = this.currentlySelected === null;
+          const differentFromLastSelection = noPreviousSelection || (newSelection.name !== this.currentlySelected.name);
 
-      if(noPreviousSelection || differentFromLastSelection){
-        // set our selection with the new one
-        this.currentlySelected = newSelection;
-      }
+          if(differentFromLastSelection){
+            // reset the sizes of the other nodes
+            this.updateMeshes();
+          }
 
+          if(noPreviousSelection || differentFromLastSelection){
+            // set our selection with the new one
+            this.currentlySelected = newSelection;
+          }
 
+          // move tooltip over to node and change text to node title if on hub
+          // expand selected node
+          this.expandNode(this.currentlySelected.node_index);
 
-      // move tooltip over to node and change text to node title if on hub
-      // this will probably need to change to make it more general
-      if(this.currentlySelected.hub || this.constants.misc.select_all){
-        // expand selected node
-        this.expandNode(intersects[0].index);
+          // update tooltip with name of node.
+          this.tooltip
+            .html(`<h3>${this.currentlySelected.name}</h3>`)
+            .style('top',  `${this.mouseRaw.y + this.constants.misc.tooltip_offset}px`)
+            .style('left', `${this.mouseRaw.x + this.constants.misc.tooltip_offset}px`)
+            .style('display', 'block');
 
-        // update tooltip with name of node.
-        this.tooltip
-          .html(`<h3>Code: ${this.currentlySelected.name}</h3>`)
-          .style('top',  `${this.mouseRaw.y + this.constants.misc.tooltip_offset}px`)
-          .style('left', `${this.mouseRaw.x + this.constants.misc.tooltip_offset}px`)
-          .style('display', 'block');
-      }
-    } else {
-      // if this is the first frame without something selected, reset the sizes
-      if(this.currentlySelected){
-        // reset tooltip
-        resetTooltip(this.tooltip);
-        // unselect nodes visually
-        this.updateMeshes();
-        // undo selected internally
-        this.currentlySelected = null;
+        } else {
+          // if this is the first frame without something selected, reset the sizes
+          if(this.currentlySelected){
+            // reset tooltip
+            resetTooltip(this.tooltip);
+            // unselect nodes visually
+            this.updateMeshes();
+            // undo selected internally
+            this.currentlySelected = null;
+          }
+        }
       }
     }
 
@@ -449,16 +460,19 @@ class phewasNetwork{
     this.renderer.render(this.scene, this.camera);
   }
 
+  resetViz(){
+    // cleanup the buffers and reset simulation count if new data is added
+    this.node_mesh.geometry.dispose();
+    this.link_mesh.geometry.dispose();
+    // reset the iteration count so new data can be layout-ed
+    this.iteration = 0;
+  }
+
   // function called to kick off visualization with data.
   drawPlot({data, settings}){
 
     // check if we've already got a scene going
-    if(this.node_mesh){
-      this.node_mesh.geometry.dispose();
-      this.link_mesh.geometry.dispose();
-      // reset the iteration count so new data can be layout-ed
-      this.iteration = 0;
-    }
+    if(this.node_mesh) this.resetViz();
 
     // extract node and link data
     this.nodes = data.vertices.map(d => ({
@@ -469,8 +483,6 @@ class phewasNetwork{
     }));
     this.links = data.edges.map(d => ({source: d.from, target: d.to}));
 
-    this.max_iterations = settings.max_iterations || 50;
-
     // Overwrite default constants if R supplies new ones.
     for(let section in this.constants){
       Object.assign(this.constants[section], settings[section]);
@@ -480,8 +492,11 @@ class phewasNetwork{
     this.plot_colors = makePlotColors(this.constants.colors);
 
     // initialize our simulation object and perform one iteration to get link data in proper form
-    this.simulation = setupSimulation(this.nodes, this.links, settings.force_strength);
-    this.simulation.tick();
+    this.simulation = setupSimulation(
+      this.nodes, this.links,
+      this.constants.misc.manybody_strength,
+      this.constants.misc.link_strength
+    );
 
     // Building the visualization
     // --------------------------------------------------------------
@@ -523,9 +538,9 @@ class phewasNetwork{
   // will highlight and expand a given node
   expandNode(index){
     const color_attributes = this.node_mesh.geometry.attributes.color.array,
-          size_attributes = this.node_mesh.geometry.attributes.size.array;
+          size_attributes = this.node_mesh.geometry.attributes.size.array,
+          [color, size] = this.colorSizeChooser(this.nodes[index], true);
 
-    const [color, size] = this.colorSizeChooser(this.nodes[index], true);
     color_attributes[index*3]     = color.r;
     color_attributes[index*3 + 1] = color.g;
     color_attributes[index*3 + 2] = color.b;
