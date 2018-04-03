@@ -66,23 +66,32 @@ function generate_edge_positions(nodes, links){
 }
 
 // same but for the nodes/points
-function generate_point_attributes(nodes, plot_colors, constants){
+function generate_point_positions(nodes){
   const num_points = nodes.length,
-        color = new THREE.Color(),
-        point_locations = new Float32Array(num_points*3),
-        point_colors = new Float32Array(num_points*3),
-        point_sizes = new Float32Array(num_points);
-  let vertex;
+        point_locations = new Float32Array(num_points*3);
 
+  let vertex;
 
   for (let i = 0; i < num_points; i ++ ) {
     vertex = nodes[i];
     point_locations[i*3]     = vertex.cx;
     point_locations[i*3 + 1] = vertex.cy;
     point_locations[i*3 + 2] = vertex.cz;
+  }
+  return point_locations;
+}
 
+function generate_point_statics_attrs(nodes, constants){
+  const num_points = nodes.length,
+        color = new THREE.Color(),
+        point_colors = new Float32Array(num_points*3),
+        point_sizes = new Float32Array(num_points);
+  let vertex;
+
+  for (let i = 0; i < num_points; i ++ ) {
+    vertex = nodes[i];
     // color the point
-    const {r,g,b} = plot_colors[vertex.hub ? 'hub' : vertex.subtype ? 'subtype': 'point'];
+    const {r,g,b} = color.set(vertex.color);
     point_colors[i*3]     = r;
     point_colors[i*3 + 1] = g;
     point_colors[i*3 + 2] = b;
@@ -90,7 +99,7 @@ function generate_point_attributes(nodes, plot_colors, constants){
     // and sizes...
     point_sizes[i] = vertex.hub? constants.sizes.hub_size: constants.sizes.point_size;
   }
-  return {locations: point_locations, colors: point_colors, sizes: point_sizes};
+  return {colors: point_colors, sizes: point_sizes};
 }
 
 // construct mesh for the edges between nodes
@@ -111,15 +120,17 @@ function buildEdges(nodes, links, constants){
 }
 
 // construct mesh for the nodes.
-function buildNodes(nodes, plot_colors, constants){
+function buildNodes(nodes, nodeColors, nodeSizes, constants){
   // fill in a blank geometry object with the vertices from our points
   const geometry = new THREE.BufferGeometry(),
-        {locations, colors, sizes} = generate_point_attributes(nodes, plot_colors, constants);
-        material = makeNodeMaterial(constants);
+        locations = generate_point_positions(nodes),
+        material = makeNodeMaterial(constants),
+        colorsCopy = new Float32Array([...nodeColors]), // need immutable copies of these guys to not overwrite static defaults
+        sizesCopy = new Float32Array([...nodeSizes]);
 
   geometry.addAttribute('position', new THREE.BufferAttribute( locations, 3 ) );
-  geometry.addAttribute('color',    new THREE.BufferAttribute( colors,    3 ) );
-  geometry.addAttribute('size',     new THREE.BufferAttribute( sizes,     1 ) );
+  geometry.addAttribute('color',    new THREE.BufferAttribute( colorsCopy, 3 ) );
+  geometry.addAttribute('size',     new THREE.BufferAttribute( sizesCopy, 1 ) );
 
   // need to run this so we get a center to aim our camera at.
   geometry.computeBoundingSphere();
@@ -308,6 +319,10 @@ class phewasNetwork{
     this.node_mesh = null;
     this.link_mesh = null;
 
+    // node geometry color and size defaults so we only calc once
+    this.nodeColors = null;
+    this.nodeSizes = null;
+
     // keep track of iteration so we can stop simulation eventually
     this.iteration = 0;
     this.max_iterations = 1;
@@ -342,28 +357,29 @@ class phewasNetwork{
     });
   }
 
-  updateMeshes(){
-    // generate the new attribute vectors for the point and line meshes
-    const {
-      locations: p_l,
-      colors: p_c,
-      sizes: p_s,
-    } = generate_point_attributes(this.nodes, this.plot_colors, this.constants);
-    this.node_mesh.geometry.attributes.position.array = p_l;
-    this.node_mesh.geometry.attributes.color.array = p_c;
-    this.node_mesh.geometry.attributes.size.array = p_s;
-
+  updatePositions(){
+    // generate the new position attribute vector for point and line meshes
+    this.node_mesh.geometry.attributes.position.array = generate_point_positions(this.nodes);
     this.link_mesh.geometry.attributes.position.array = generate_edge_positions(this.nodes, this.links);
 
     // recompute bounding sphere for camera centering.
     this.node_mesh.geometry.computeBoundingSphere();
 
-    // let the scene know the meshes need to be updated.
+    // let the scene know the meshes have updated positions.
     this.node_mesh.geometry.attributes.position.needsUpdate = true;
-    this.node_mesh.geometry.attributes.color.needsUpdate = true;
-    this.node_mesh.geometry.attributes.size.needsUpdate = true;
     this.link_mesh.geometry.attributes.position.needsUpdate = true;
   }
+
+  resetNodeColorSize(){
+    const colorsCopy = new Float32Array([...this.nodeColors]), // need immutable copies of these guys to not overwrite static defaults
+          sizesCopy = new Float32Array([...this.nodeSizes]);
+    this.node_mesh.geometry.attributes.color.array = colorsCopy;
+    this.node_mesh.geometry.attributes.size.array = sizesCopy;
+
+    this.node_mesh.geometry.attributes.color.needsUpdate = true;
+    this.node_mesh.geometry.attributes.size.needsUpdate = true;
+  }
+
 
   colorSizeChooser({hub, subtype}, selected){
       const colors = this.plot_colors,
@@ -396,7 +412,7 @@ class phewasNetwork{
       // normalize the data after layout step
       this.normalize_projection();
       // update mesh attributes.
-      this.updateMeshes();
+      this.updatePositions();
       this.iteration += 1;
     }
 
@@ -420,7 +436,7 @@ class phewasNetwork{
 
           if(differentFromLastSelection){
             // reset the sizes of the other nodes
-            this.updateMeshes();
+            this.resetNodeColorSize();
           }
 
           if(noPreviousSelection || differentFromLastSelection){
@@ -445,7 +461,7 @@ class phewasNetwork{
             // reset tooltip
             resetTooltip(this.tooltip);
             // unselect nodes visually
-            this.updateMeshes();
+            this.resetNodeColorSize();
             // undo selected internally
             this.currentlySelected = null;
           }
@@ -479,7 +495,8 @@ class phewasNetwork{
       id: d.index,
       name: d.name || null,
       hub: d.hub,
-      subtype: d.subtype
+      subtype: d.subtype,
+      color: d.color,
     }));
     this.links = data.edges.map(d => ({source: d.from, target: d.to}));
 
@@ -488,7 +505,11 @@ class phewasNetwork{
       Object.assign(this.constants[section], settings[section]);
     }
 
-    // Initialize a color object for later node coloring.
+    // Initialize a color and size vectors once as they are (relatively) static.
+    const {colors: nodeColors, sizes: nodeSizes} = generate_point_statics_attrs(this.nodes, this.constants);
+    this.nodeColors = nodeColors;
+    this.nodeSizes = nodeSizes;
+
     this.plot_colors = makePlotColors(this.constants.colors);
 
     // initialize our simulation object and perform one iteration to get link data in proper form
@@ -504,7 +525,7 @@ class phewasNetwork{
     this.link_mesh = buildEdges(this.nodes, this.links, this.constants);
     // --------------------------------------------------------------
     // Set up points/nodes representing cases and hubs
-    this.node_mesh = buildNodes(this.nodes, this.plot_colors, this.constants);
+    this.node_mesh = buildNodes(this.nodes, this.nodeColors, this.nodeSizes, this.constants);
     // --------------------------------------------------------------
     // Initialize the 'scene' and add our geometries we just made
     this.scene = setupScene(this.plot_colors, this.node_mesh, this.link_mesh);
