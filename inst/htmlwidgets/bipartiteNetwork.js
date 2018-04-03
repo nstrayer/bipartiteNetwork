@@ -371,34 +371,12 @@ class phewasNetwork{
   }
 
   resetNodeColorSize(){
-    const colorsCopy = new Float32Array([...this.nodeColors]), // need immutable copies of these guys to not overwrite static defaults
-          sizesCopy = new Float32Array([...this.nodeSizes]);
-    this.node_mesh.geometry.attributes.color.array = colorsCopy;
-    this.node_mesh.geometry.attributes.size.array = sizesCopy;
+    this.node_mesh.geometry.attributes.color.array = new Float32Array([...this.nodeColors]);
+    this.node_mesh.geometry.attributes.size.array = new Float32Array([...this.nodeSizes]);
 
     this.node_mesh.geometry.attributes.color.needsUpdate = true;
     this.node_mesh.geometry.attributes.size.needsUpdate = true;
   }
-
-
-  colorSizeChooser({hub, subtype}, selected){
-      const colors = this.plot_colors,
-            sizes = this.constants.sizes;
-
-      let color, size;
-
-      if(hub){
-        color = colors[`${selected?'selected_':''}hub`];
-        size = sizes['hub_size'];
-      } else {
-        color = colors[`${selected?'selected_':''}${subtype?'subtype':'point'}`];
-        size = sizes['point_size'];
-      }
-      if(selected){
-        size *= sizes.selection_size_mult;
-      }
-      return [color, size];
-    }
 
   // main render function. This gets called repeatedly
   render(){
@@ -558,14 +536,18 @@ class phewasNetwork{
 
   // will highlight and expand a given node
   expandNode(index){
-    const color_attributes = this.node_mesh.geometry.attributes.color.array,
-          size_attributes = this.node_mesh.geometry.attributes.size.array,
-          [color, size] = this.colorSizeChooser(this.nodes[index], true);
+    const color_atts = this.node_mesh.geometry.attributes.color.array,
+          size_attributes = this.node_mesh.geometry.attributes.size.array;
 
-    color_attributes[index*3]     = color.r;
-    color_attributes[index*3 + 1] = color.g;
-    color_attributes[index*3 + 2] = color.b;
-    size_attributes[index] = size;
+    const to255 = (proportion) => Math.round(proportion*255);
+    const toProp = (full) => full/255;
+    const brighter = d3.color(`rgb(${to255(this.nodeColors[index*3])}, ${to255(this.nodeColors[index*3 + 1])}, ${to255(this.nodeColors[index*3 + 2])})`)
+    .darker();
+
+    color_atts[index*3]     = toProp(brighter.r);
+    color_atts[index*3 + 1] = toProp(brighter.g);
+    color_atts[index*3 + 2] = toProp(brighter.b);
+    size_attributes[index]  = this.nodeSizes[index]*this.constants.sizes.selection_size_mult;
 
     this.node_mesh.geometry.attributes.color.needsUpdate = true;
     this.node_mesh.geometry.attributes.size.needsUpdate = true;
